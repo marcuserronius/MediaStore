@@ -1,0 +1,98 @@
+#!/usr/bin/env ruby
+# show_info
+
+$: << File.expand_path("~/lib")
+
+require "show_info.rb"
+
+# ARGV parsing utils
+class << ARGV
+  def has?(*o) o.find{|p| include? p}; end
+  def val(*o) ARGV[ARGV.index(has?(*o)) + 1]; end
+end
+
+# display help
+if ARGV.has? "-h", "--help"
+  print <<-EOT
+Stores and retrieves information about tv shows from a database.
+
+== Arguments ==
+The first argument is either "set", "get", or "find". This determines
+whether the information is being stored or retrieved, or if a show 
+name search is beign performed, respectively. When using "set", all 
+arguments that follow must have values. When using "get", only 
+"--show" and "--season" should have values. For both of those, there 
+are various options:
+
+  --show
+    The name (possibly with date specifier) of the show the data 
+    pertains to.
+  --season
+    The season number. If left out, data refers to the whole show.
+  --title
+    Either the title of the show (in case it is different from what
+    it is named in TVDB), or the title of the individual season.
+  --type
+    What the segment is called; default value is "Season", but it can
+    be anything -- for example, "Series" or "Book".
+  --label
+    The label given to the season, such as "Book 1: Water",
+    "Series A", or "Season 3: Coven". Might be automatically
+    generated from the season's type, number, and title fields, or
+    set explicitly.
+
+When using "find", only "--show" may follow.
+
+== Usage == 
+To set information about a season of a show:
+  show_info set --show "The Legend of Korra" --season 3 \
+    --type Book --title Change
+
+To set information about an entire show:
+  show_info set --show "Doctor Who (2005)" --title "Doctor Who"
+
+To retrieve information about a season, just the label:
+  show_info get --show "The Legend of Korra" --season 2 --label
+
+To retrieve what the title of an entire show is:
+  show_info get --show "Doctor Who (2005)" --title
+
+When retrieving information, the data is printed one line at a time,
+in the order requested. For example, the command
+  show_info get --show "The Legend of Korra" --season 1 \
+    --type --title --label
+might output:
+  Book
+  Spirit
+  Book 1: Spirit
+
+  EOT
+
+  # help is displayed, now exit
+  exit 0
+end
+
+puts case ARGV.first
+  when "set"
+    fields = {}
+    fields[:type]  = ARGV.val("--type" ) if ARGV.has? "--type"
+    fields[:season_title] = ARGV.val("--title") if ARGV.has? "--title"
+    fields[:label] = ARGV.val("--label") if ARGV.has? "--label"
+    if ARGV.has? "--season"
+      ShowInfo.set(ARGV.val("--show"), ARGV.val("--season").to_i, **fields)
+    else
+      ShowInfo.set(ARGV.val("--show"), show_title: ARGV.val("--title"))
+    end
+  when "get"
+    if ARGV.has? "--season"
+      fields = []
+      fields[ARGV.index("--type" )] = :type if ARGV.has? "--type" 
+      fields[ARGV.index("--title")] = :title if ARGV.has? "--title"
+      fields[ARGV.index("--label")] = :label if ARGV.has? "--label"
+      ShowInfo.get(ARGV.val("--show"), ARGV.val("--season").to_i).values_at(*fields.compact)
+    else
+      ShowInfo.get(ARGV.val("--show")).values_at(:title) if ARGV.has? "--title"
+    end
+  when "find"
+    ShowInfo.find(ARGV.val("--show"))
+end

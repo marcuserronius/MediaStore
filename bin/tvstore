@@ -1,0 +1,154 @@
+#!/usr/bin/env ruby
+# renaming mover
+$:.unshift File.expand_path("~/lib")
+require 'show_info'
+require 'tag'
+
+include OSX::Filesystem
+
+# a script that will take a video file, 
+# determine the show name, season number, and episode title,
+# and store the file in the correct place with the correct name
+
+# if any other instance is running, wait for it
+random = rand(36**20).to_s 36
+Dir.mkdir("/tmp/mytvstore") unless File.exist? "/tmp/mytvstore"
+(warn("waiting..."); sleep(10)) until Dir["/tmp/mytvstore/*"].empty? || Dir["/tmp/mytvstore/*"].all? do |file|
+  Time.now - File.stat(file).ctime > 60*30 # older than a half hour
+end if false
+
+# now, create a file in the folder
+begin 
+  `touch /tmp/mytvstore/#{random}`
+
+# get the video's path
+vidpath = ARGV.shift
+# get the TV folder it will be nested into
+tvdir   = ARGV.shift
+
+# get the filename itself
+vidname = File.basename(vidpath)
+
+# reject if tagged as already imported. untag a file to allow re-importing
+exit(0) if Tag.list(vidpath).include? :"tvstore-stored"
+
+
+# First, find the part that has the season/episode numbers.
+# Might be in one of two formats: s00e00 or 00x00
+# Also might be s00e00e00 for double episodes
+
+series_name, season_num, ep_num, ep_num2, ext =
+  if vidname =~ /s\d\de\d\d/i # s01e01(e02...) format
+    vidname.match(/^(.+?)\s*s(\d\d?)e(\d\d)(?:(?:\-|e|-e)(\d\d))?.*\.([^\.]+)$/i)[1..-1]
+  else # try 1x01(x02...) format
+    vidname.match(/^(.+?)\s*(\d\d?)x(\d\d)(?:(?:\-|x)(\d\d))?.*\.([^\.]+)$/i)[1..-1]
+  end
+
+series_name = series_name.gsub(/[\._]/," ")
+season_num  = season_num.to_i(10)
+ep_num      = ep_num.to_i(10)
+ep_num2     = ep_num2.to_i(10) if ep_num2
+
+# next, connect to TVDB and get the episode title
+require 'tvdbr'
+# fix a bug in tvdbr?
+class Hash
+  def blank?() empty? end
+end
+class Array
+  def blank?() empty? end
+end
+class NilClass
+  def blank?() true end
+end
+
+tvdb = Tvdbr::Client.new "FE4DFDC5B5EF3F52" # Yup that's my api key
+
+# get the series: first, check the storage location
+squish = lambda{|s|s.downcase.scan(/[[:alnum:]]+/).join}
+match = Dir.chdir(tvdir){Dir.entries('.').find{|e| squish[e] == squish[series_name]}}
+
+# fetch tvdb name from on-disk/release name
+match = ShowInfo.find(match || series_name)
+
+series = tvdb.find_series_by_title(match)
+if series.nil?
+  warn "Um can't find the proper name of the series"
+  exit!
+end
+#p series
+# get the episodes
+episodes = series.episodes
+
+# find the mentioned episode
+ep = episodes.select do |e|
+  e.season_number.to_i == season_num &&
+    e.episode_number.to_i == ep_num
+end.first
+# find the second episode, if needed
+ep2 = if ep_num2
+  episodes.select do |e|
+    e.season_number.to_i == season_num &&
+      e.episode_number.to_i == ep_num2
+  end.first
+end
+
+# assemble the canonical filename
+numbers = /(?:(?:eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen)|
+          (?:ten|twenty|(?:thir|for|fif|six|seven|eigh|nine)ty)
+          (?:[ \-](?:one|two|three|four|five|six|seven|eight|nine))?|
+          (?:one|two|three|four|five|six|seven|eight|nine)|(?:zero))/xi
+
+ep_name = if /^(Episode (\d+|#{numbers})|)$/ =~ ep.episode_name
+  "" # eliminate names for untitled episodes like "Episode 1"
+elsif ep2 # two-name version
+  " #{ep.episode_name}/#{ep2.episode_name}"
+else # single name version
+  " #{ep.episode_name}"
+end
+
+ep_id = if ep_num2
+  "s%02ie%02ie%02i" % [season_num, ep_num, ep_num2] # two episode format
+else
+  "s%02ie%02i" % [season_num, ep_num] # single episode
+end
+
+
+# now, we create the relative path segments
+# replace colons and slashes with full-width equivalents
+# EDIT: now uses show_info.rb to filter/fetch season and show
+_sn = ShowInfo.get(series.series_name)[:title] # the on-disk version of the series name
+_sl = ShowInfo.get(series.series_name, season_num.to_i)[:label] # the label for the season folder.
+filename = "#{_sn} #{ep_id}#{ep_name}"
+path_parts = [_sn, _sl, filename].map{|p| p.tr("/:\\","∕∶⧵")}
+
+# join them
+path = File.join(*path_parts) + "." + ext
+
+# create the directories if needed
+require 'fileutils'
+FileUtils.mkdir_p File.join(tvdir, File.dirname(path))
+
+
+=begin
+  system  "/usr/local/bin/ffmpeg", "-i", vidpath,
+          "-c:a", "libfaac", "-q:a", "120",
+          "-c:v", "mpeg4", "-q:v", "8","-flags", "+mv4+aic+mv0+qprd+qpel",
+          "-mbd", "rd",
+          "-trellis", "2",
+          "-cmp", "2", "-subcmp", "2", "-g", "300",
+          File.join(tvdir,path)
+  # and done!
+=end
+print "+ #{File.join(tvdir,path)}..."
+STDOUT.flush
+FileUtils.cp vidpath, File.join(tvdir,path)
+Tag.add([:"tvstore-stored"], vidpath)
+puts " Done"
+
+# remove status file
+ensure
+  `rm /tmp/mytvstore/#{random}`
+
+end
+

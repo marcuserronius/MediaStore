@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+# mytvstore
+#
+# call with a list of files and/or folders. files will be
+# converted directly, folders will be recursively searched
+# for videos to be converted.
+#TODO: merge most of tvstore into this, separating into lib/bin
+proj_root = File.dirname(File.dirname(File.realpath(__FILE__)))
+$:.unshift File.join(proj_root,"lib")
+
+# where is it?
+tvstore = "#{proj_root}/bin/tvstore"
+
+# list of acceptable file types
+types = /\.(?:avi|mkv|mp4|m4v|mpg|mpeg|ts)$/
+
+# folders or files to work on
+places = ARGV.empty? ? ["/Users/mark/Downloads/_TV/"] : ARGV.to_a
+
+#TODO: make this dynamic.
+# where's the video library held?
+tvlib = "/Volumes/mammoth/Media/TV"
+
+# find the files to work on
+files = []
+places.each do |item|
+  if File.directory?(item)
+    in_here =  Dir.chdir(item){Dir.glob('**/*').map{|e|File.expand_path(e)}}.reject{|e|e[/sample/i]}
+    files.concat( in_here.grep(types) )
+  else
+    files << item if item =~ types
+  end
+end
+
+
+files = files.flatten.uniq
+
+# call tvstore on each file
+files.each do |file|
+  system tvstore, file, tvlib
+end
