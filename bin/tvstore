@@ -62,7 +62,7 @@ class NilClass
   def blank?() true end
 end
 
-tvdb = Tvdbr::Client.new "FE4DFDC5B5EF3F52" # Yup that's my api key
+tvdb = Tvdbr::Client.new File.read(File.expand_path("~/.tvdb-api-key"))
 
 # get the series: first, check the storage location
 squish = lambda{|s|s.downcase.scan(/[[:alnum:]]+/).join}
